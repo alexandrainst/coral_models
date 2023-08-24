@@ -2,7 +2,7 @@
 the nst dataset. 
 
 Usage:
-    python build_syntethic_nts.py 
+    python src/scripts/build_synthetic_nts.py --method gtts ./data/raw_data/nst-da-train-metadata.csv ./data/raw_data/
 """
 
 import os
@@ -10,6 +10,7 @@ import subprocess
 
 from gtts import gTTS
 import pandas as pd
+import click
 from pathlib import Path
 
 
@@ -61,28 +62,35 @@ def generate_speech_gTTS(text: str, filename: Path, language="da"):
     tts = gTTS(text, lang=language)
     tts.save(filename)
 
-
-def main():
-    """Main function to generate speech from text using gTTS."""
-
+@click.command()
+@click.option('--method', type=click.Choice(['mac', 'espeak', 'gtts']), default='gtts', help='Choose the method for generating speech')
+@click.argument('input_file', type=click.Path(exists=True))
+@click.argument('output_dir', type=click.Path())
+def main(method, input_file: Path, output_dir: Path):
+    """Script that builds a synthetic voice audio from reading the nst dataset."""
+    
     # Read nst data.
-    csv_file = "./data/raw_data/nst-da-train-metadata.csv"
+    csv_file = input_file 
 
     # Read the Excel file into a pandas DataFrame
     columns = ["audio", "text", "speaker_id", "age", "sex", "dialect", "recording_datetime"]
     df = pd.read_csv(csv_file, usecols=columns)
 
-    # folder for saving files.
-    folder = "./data/raw_data/"
-
     for index, row in df.iterrows():
         if pd.isna(row["text"]):
             pass
         else:
-            # Get text and file name
             text_danish = row["text"]
-            filename = os.path.join(folder, row["audio"])
-            generate_speech_from_gTTS(text=text_danish, filename=filename)
+            filename = Path(output_dir) / row["audio"]
+            
+            if method == 'mac':
+                generate_speech_mac(text_danish, filename)
+            elif method == 'espeak':
+                generate_speech_eSpeak(text_danish, filename)
+            elif method == 'gtts':
+                generate_speech_gTTS(text_danish, filename)
+            else:
+                pass
 
 if __name__ == "__main__":
     main()
