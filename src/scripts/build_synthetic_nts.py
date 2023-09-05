@@ -141,8 +141,8 @@ def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max
             audio = gTTS(text=text, lang=language)
             # Save the audio file
             audio.save(filename)
-            print("Waiting for 2 seconds... Rate limit exists.")
-            time.sleep(2)
+            print("Waiting for 1 seconds... Rate limit exists.")
+            time.sleep(1)
             break  # Break out of the loop if successful
         except Exception as e:
             if "429 (Too Many Requests)" in str(e):
