@@ -6,10 +6,11 @@ TODO: Including a dataset config file which uses the dataset stored on Hugging F
 Usage:
 python src/scripts/build_synthetic_nts.py --method gtts ./data/nst/
 """
-
+import time
 import datetime as dt
 import subprocess
 from pathlib import Path
+import requests.exceptions
 
 import click
 import pandas as pd
@@ -117,6 +118,53 @@ def generate_speech_gtts(text: str, filename: Path, language="da"):
     tts.save(filename)
 
 
+class GTTSRateLimitError(Exception):
+    pass
+
+
+def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max_retries=3):
+    """Generate speech from text using gTTS with retry handling and save it to a file.
+
+    Args:
+        text: The text to convert to speech.
+        filename: The name of the output audio file.
+        language (str, optional): Language used to speak, default is 'en' (English).
+        max_retries (int, optional): Maximum number of retries for HTTP 429 errors.
+
+    Returns:
+        None
+    """
+    retries = 0
+    while retries < max_retries:
+        try:
+            # Create the gTTS object
+            audio = gTTS(text=text, lang=language)
+            # Save the audio file
+            audio.save(filename)
+            print("Waiting for 2 seconds... Rate limit exists.")
+            time.sleep(2)
+            break  # Break out of the loop if successful
+        except Exception as e:
+            if "429 (Too Many Requests)" in str(e):
+                if retries == 0:
+                    retries += 1
+                    print("Rate limited. Waiting for 10 seconds...")
+                    time.sleep(10)
+                if retries > 0:
+                    retries += 1
+                    print("Rate limited. Waiting for 100 seconds...")
+                    time.sleep(100)
+
+                if retries > 1:
+                    retries += 1
+                    print("Rate limited. Waiting for 1 day...")
+                    time.sleep(60*60*24)
+            else:
+                raise e
+    else:
+        raise Exception("Maximum retries exceeded for generating speech")
+
+
 def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) -> DatasetDict:
     """Sets up the metadata files and builds the Hugging Face dataset.
 
@@ -164,11 +212,12 @@ def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) ->
         # for text in metadata_df.text:
         #    print(text)
         # think about this.
-        for index, row in metadata_df.iterrows():
+        for index, row in tqdm(
+            iterable=metadata_df.iterrows(),
+            total=len(metadata_df),
+            desc=f"Extracting file names for the {split} split",
+        ):
             if pd.isna(row["text"]):
-                # remove row?
-                # print(row)
-                # print(metadata_df.iloc[index])
                 metadata_df = metadata_df.drop(index=metadata_df.iloc[index].name)
                 pass
             else:
@@ -183,14 +232,18 @@ def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) ->
                     generate_speech_mac(text_danish, filename)
                     metadata_df.iloc[index,
                                      metadata_df.columns.get_loc("dialect")] = "mac"
+
                 elif method == "espeak":
                     generate_speech_espeak(text_danish, filename)
-                    metadata_df.iloc[index,
-                                     metadata_df.columns.get_loc("dialect")] = "espeak"
+                    metadata_df.iloc[index, metadata_df.columns.get_loc(
+                        "dialect")] = "espeak"
+
                 elif method == "gtts":
-                    generate_speech_gtts(text_danish, filename)
-                    metadata_df.iloc[index,
-                                     metadata_df.columns.get_loc("dialect")] = "gtts"
+                    generate_speech_gtts_with_retry(text_danish, filename)
+                    # generate_speech_gtts(text_danish, filename)
+                    metadata_df.iloc[index, metadata_df.columns.get_loc(
+                        "dialect")] = "gtts"
+
                 audio_info = get_audio_file_info(filename)
         metadata_df.to_csv(metadata_path, index=False)
 
