@@ -4,7 +4,7 @@ TODO: Saving the dataset as a Hugging Face Dataset.
 TODO: Including a dataset config file which uses the dataset stored on Hugging Face Hub in the training script.
 
 Usage:
-python src/scripts/build_synthetic_nts.py --method gtts ./data/raw_data/nst-da-train-metadata.csv ./data/raw_data/
+python src/scripts/build_synthetic_nts.py --method gtts ./data/nst/
 """
 
 import datetime as dt
@@ -15,7 +15,57 @@ import click
 import pandas as pd
 from gtts import gTTS
 from datasets import Audio, Dataset, DatasetDict
+from pydub import AudioSegment
 from tqdm.auto import tqdm
+
+
+def get_audio_file_info(filename):
+    """
+    Get information about an audio file.
+
+    Args:
+        filename (str): The path to the audio file.
+
+    Returns:
+        dict: A dictionary containing audio file information.
+            - 'duration_ms' (int): Duration in milliseconds.
+            - 'duration_seconds' (float): Duration in seconds.
+            - 'channels' (int): Number of audio channels (mono or stereo).
+            - 'sample_width_bytes' (int): Sample width in bytes.
+            - 'frame_rate' (int): Frame rate in samples per second.
+
+    Example:
+        audio_info = get_audio_file_info("your_audio_file.mp3")
+        print(audio_info)
+    """
+    # Load the audio file
+    audio = AudioSegment.from_file(filename)
+
+    # Get the duration in milliseconds
+    duration_ms = len(audio)
+
+    # Convert duration to seconds
+    duration_seconds = duration_ms / 1000
+
+    # Get the number of channels (mono or stereo)
+    channels = audio.channels
+
+    # Get the sample width (in bytes)
+    sample_width_bytes = audio.sample_width
+
+    # Get the frame rate (samples per second)
+    frame_rate = audio.frame_rate
+
+    # Create a dictionary with the extracted information
+    audio_info = {
+        'duration_ms': duration_ms,
+        'duration_seconds': duration_seconds,
+        'channels': channels,
+        'sample_width_bytes': sample_width_bytes,
+        'frame_rate': frame_rate
+    }
+
+    return audio_info
 
 
 def generate_speech_mac(text: str, filename: Path):
@@ -44,7 +94,7 @@ def generate_speech_espeak(text: str, filename: Path, variant="+m1"):
     Args:
         text (str): The text to convert to speech.
         filename (str): The name of the output audio file.
-        variant (str, optional): The eSpeak voice variant. Default is "+m1".
+        variant (str): The eSpeak voice variant. Default is "+m1".
 
     Returns:
         None
@@ -67,7 +117,7 @@ def generate_speech_gtts(text: str, filename: Path, language="da"):
     tts.save(filename)
 
 
-def build_huggingface_dataset(method, input_file: Path, output_dir: Path) -> DatasetDict:
+def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) -> DatasetDict:
     """Sets up the metadata files and builds the Hugging Face dataset.
 
     Returns:
@@ -104,44 +154,49 @@ def build_huggingface_dataset(method, input_file: Path, output_dir: Path) -> Dat
         # change values here to match syntethic dataset.
         metadata_path = input_file / Path(split) / "metadata.csv"
         metadata_df = pd.read_csv(metadata_path, low_memory=False)
-        metadata_df = metadata_df[columns_to_keep.keys()]
         metadata_df = metadata_df.rename(columns=columns_to_keep)
         metadata_df.age = metadata_df.age.map(ensure_int)
         metadata_df.speaker_id = metadata_df.age.map(ensure_int)
         metadata_df.text = metadata_df.text.map(fix_text_column)
-        metadata_df = metadata_df.dropna()
+        # metadata_df = metadata_df.dropna()
         metadata_df = metadata_df.convert_dtypes()
-        metadata_df["dialect"] = "gtts"
-        metadata_df["sex"] = "Male"  # ?
-        metadata_df["speaker_id"] = 0  # ?
-
         # Read text with speech synthesizer and save file in correct place and format.
-        for text in metadata_df.text:
-            print(text)
+        # for text in metadata_df.text:
+        #    print(text)
         # think about this.
         for index, row in metadata_df.iterrows():
             if pd.isna(row["text"]):
+                # remove row?
+                # print(row)
+                # print(metadata_df.iloc[index])
+                metadata_df = metadata_df.drop(index=metadata_df.iloc[index].name)
                 pass
             else:
-                text_danish = row["text"]
+                text_danish = fix_text_column(row["text"])
                 # where to place the file.
-                filename = Path(output_dir) / row["audio"]
-                # add something to metadata_df
+                filename = Path(input_file) / row["audio"]
+                # Data to metafile.
+                metadata_df.iloc[index, metadata_df.columns.get_loc("speaker_id")] = 0
+                metadata_df.iloc[index, metadata_df.columns.get_loc(
+                    "recording_datetime")] = dt.datetime.now().isoformat()
                 if method == "mac":
                     generate_speech_mac(text_danish, filename)
+                    metadata_df.iloc[index,
+                                     metadata_df.columns.get_loc("dialect")] = "mac"
                 elif method == "espeak":
                     generate_speech_espeak(text_danish, filename)
+                    metadata_df.iloc[index,
+                                     metadata_df.columns.get_loc("dialect")] = "espeak"
                 elif method == "gtts":
                     generate_speech_gtts(text_danish, filename)
-                else:
-                    pass
-
-        # Generate date?
-        # metadata_df["recording_datetime"] = recording_datetimes
+                    metadata_df.iloc[index,
+                                     metadata_df.columns.get_loc("dialect")] = "gtts"
+                audio_info = get_audio_file_info(filename)
         metadata_df.to_csv(metadata_path, index=False)
 
         split_dataset = Dataset.from_pandas(metadata_df, preserve_index=False)
-        split_dataset = split_dataset.cast_column("audio", Audio(sampling_rate=16_000))
+        split_dataset = split_dataset.cast_column(
+            "audio", Audio(sampling_rate=audio_info["frame_rate"]))
         dataset_dict[split] = split_dataset
 
     return DatasetDict(dataset_dict)
@@ -155,10 +210,12 @@ def build_huggingface_dataset(method, input_file: Path, output_dir: Path) -> Dat
     help="Choose the method for generating speech",
 )
 @click.argument("input_file", type=click.Path(exists=True))
-@click.argument("output_dir", type=click.Path())
-def main(method, input_file: Path, output_dir: Path):
+# @click.argument("output_dir", type=click.Path())
+def main(method, input_file: Path):
     """Script that builds a synthetic voice audio from reading the nst dataset."""
-    # Read the Excel file into a pandas DataFrame
+    input_file_path = Path(input_file)
+
+    hugging_face = build_huggingface_dataset(method, input_file_path)
 
 
 if __name__ == "__main__":
