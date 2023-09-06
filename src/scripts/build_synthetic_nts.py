@@ -122,7 +122,7 @@ class GTTSRateLimitError(Exception):
     pass
 
 
-def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max_retries=3):
+def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max_retries=300):
     """Generate speech from text using gTTS with retry handling and save it to a file.
 
     Args:
@@ -141,11 +141,11 @@ def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max
             audio = gTTS(text=text, lang=language)
             # Save the audio file
             audio.save(filename)
-            print("Waiting for 1 seconds... Rate limit exists.")
-            time.sleep(1)
+            print("Waiting for 3 seconds... Rate limit exists.")
+            time.sleep(3)
             break  # Break out of the loop if successful
         except Exception as e:
-            if "429 (Too Many Requests)" in str(e):
+            if "429 (Too Many Requests)" or "Max retries" in str(e):
                 if retries == 0:
                     retries += 1
                     print("Rate limited. Waiting for 10 seconds...")
@@ -197,7 +197,7 @@ def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) ->
     }
 
     dataset_dict: dict[str, Dataset] = dict()
-    for split in ["train", "test"]:
+    for split in ["test", "train"]:
         # This path should be consistent with the download path
         # change values here to match syntethic dataset.
         metadata_path = input_file / Path(split) / "metadata.csv"
@@ -213,7 +213,7 @@ def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) ->
         #    print(text)
         # think about this.
         for index, row in tqdm(
-            iterable=metadata_df.iterrows(),
+            iterable=metadata_df[::-1].iterrows(),
             total=len(metadata_df),
             desc=f"Extracting file names for the {split} split",
         ):
