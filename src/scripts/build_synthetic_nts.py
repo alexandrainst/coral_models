@@ -7,6 +7,7 @@ Usage:
 python src/scripts/build_synthetic_nts.py --method gtts ./data/nst/
 """
 import time
+import os
 import datetime as dt
 import subprocess
 from pathlib import Path
@@ -103,7 +104,7 @@ def generate_speech_espeak(text: str, filename: Path, variant="+m1"):
     subprocess.run(["espeak", "-vda", "-w", filename, variant, text])
 
 
-def generate_speech_gtts(text: str, filename: Path, language="da"):
+def generate_speech_gtts(text: str, filename: str, language="da"):
     """Generate speech from text using gTTS and save it to a file.
 
     Args:
@@ -115,14 +116,18 @@ def generate_speech_gtts(text: str, filename: Path, language="da"):
         None
     """
     tts = gTTS(text, lang=language)
-    tts.save(filename)
+    if os.path.exists(filename):
+        print(f"The file {filename} exists.")
+    else:
+        print(f"The file {filename} does not exist.")
+        tts.save(filename)
 
 
 class GTTSRateLimitError(Exception):
     pass
 
 
-def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max_retries=300):
+def generate_speech_gtts_with_retry(text: str, filename: str, language="dk", max_retries=300):
     """Generate speech from text using gTTS with retry handling and save it to a file.
 
     Args:
@@ -138,9 +143,12 @@ def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max
     while retries < max_retries:
         try:
             # Create the gTTS object
-            audio = gTTS(text=text, lang=language)
+            # audio = gTTS(text=text, lang=language)
             # Save the audio file
-            audio.save(filename)
+            # audio.save(filename)
+            print(filename)
+            print(text)
+            generate_speech_gtts(text, filename)
             # print("Waiting for 1 seconds... Rate limit exists.")
             # time.sleep(1)
             retries = 0
@@ -167,7 +175,7 @@ def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max
                     retries += 1
                     print("Rate limited. Waiting for 4 hours...")
                     time.sleep(4*60*60)
-                if retries > 3:
+                if retries > 4:
                     retries += 1
                     print("Rate limited. Waiting for 1 day...")
                     time.sleep(60*60*24)
@@ -177,7 +185,7 @@ def generate_speech_gtts_with_retry(text: str, filename: str, language="en", max
         raise Exception("Maximum retries exceeded for generating speech")
 
 
-def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) -> DatasetDict:
+def build_synthetic_dataset(method, input_file: Path = Path('./data/nst/')) -> DatasetDict:
     """Sets up the metadata files and builds the Hugging Face dataset.
 
     Returns:
@@ -195,6 +203,7 @@ def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) ->
     def fix_text_column(text: str) -> str:
         if text == "( ... tavshed under denne indspilning ...)":
             return ""
+        text = text.replace("\Komma", "").replace("\Punktum", "")
         return text
 
     columns_to_keep = {
@@ -208,7 +217,7 @@ def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) ->
         "RecTime": "recording_time",
     }
 
-    dataset_dict: dict[str, Dataset] = dict()
+    # dataset_dict: dict[str, Dataset] = dict()
     for split in ["test", "train"]:
         # This path should be consistent with the download path
         # change values here to match syntethic dataset.
@@ -256,15 +265,20 @@ def build_huggingface_dataset(method, input_file: Path = Path('./data/nst/')) ->
                     metadata_df.iloc[index, metadata_df.columns.get_loc(
                         "dialect")] = "gtts"
 
-                audio_info = get_audio_file_info(filename)
-        metadata_df.to_csv(metadata_path, index=False)
 
-        split_dataset = Dataset.from_pandas(metadata_df, preserve_index=False)
-        split_dataset = split_dataset.cast_column(
-            "audio", Audio(sampling_rate=audio_info["frame_rate"]))
-        dataset_dict[split] = split_dataset
+def build_synthetic_huggingface_dataset():
+    '''
+    TODO:
+    audio_info = get_audio_file_info(filename)
+    metadata_df.to_csv(metadata_path, index=False)
+
+    split_dataset = Dataset.from_pandas(metadata_df, preserve_index=False)
+    split_dataset = split_dataset.cast_column(
+        "audio", Audio(sampling_rate=audio_info["frame_rate"]))
+    dataset_dict[split] = split_dataset
 
     return DatasetDict(dataset_dict)
+    '''
 
 
 @click.command()
@@ -280,7 +294,8 @@ def main(method, input_file: Path):
     """Script that builds a synthetic voice audio from reading the nst dataset."""
     input_file_path = Path(input_file)
 
-    hugging_face = build_huggingface_dataset(method, input_file_path)
+    build_synthetic_dataset(method, input_file_path)
+    # hugging_face =
 
 
 if __name__ == "__main__":
