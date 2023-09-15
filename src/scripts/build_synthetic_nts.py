@@ -1,7 +1,5 @@
 """Script that builds a synthetic vocie audio from reading 
 the nst dataset.
-TODO: Saving the dataset as a Hugging Face Dataset.
-TODO: Including a dataset config file which uses the dataset stored on Hugging Face Hub in the training script.
 
 Usage:
 python src/scripts/build_synthetic_nts.py --method gtts ./data/nst/
